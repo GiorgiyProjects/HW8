@@ -1,0 +1,1 @@
+/usr/bin/c++  -g   CMakeFiles/bulk_multithread.dir/main.cpp.o  -o bulk_multithread  -lpthread 
