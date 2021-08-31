@@ -1,0 +1,46 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/bbrave/Desktop/OTUS/homeworks/hw8/CommandBlock.h
+iostream
+-
+vector
+-
+algorithm
+-
+chrono
+-
+ctime
+-
+fstream
+-
+iomanip
+-
+thread
+-
+queue
+-
+mutex
+-
+
+/home/bbrave/Desktop/OTUS/homeworks/hw8/async.cpp
+async.h
+/home/bbrave/Desktop/OTUS/homeworks/hw8/async.h
+
+/home/bbrave/Desktop/OTUS/homeworks/hw8/async.h
+cstddef
+-
+CommandBlock.h
+/home/bbrave/Desktop/OTUS/homeworks/hw8/CommandBlock.h
+
+/home/bbrave/Desktop/OTUS/homeworks/hw8/main.cpp
+thread
+-
+async.h
+/home/bbrave/Desktop/OTUS/homeworks/hw8/async.h
+
