@@ -1,0 +1,4 @@
+/home/runner/work/HW8/HW8/CMakeFiles/edit_cache.dir
+/home/runner/work/HW8/HW8/CMakeFiles/test.dir
+/home/runner/work/HW8/HW8/CMakeFiles/rebuild_cache.dir
+/home/runner/work/HW8/HW8/CMakeFiles/async.dir
