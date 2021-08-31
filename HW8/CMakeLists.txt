@@ -3,10 +3,10 @@ cmake_minimum_required(VERSION 3.5)
 project(bulk_multithread)
 
 find_package(Boost COMPONENTS unit_test_framework REQUIRED)
-add_executable(bulk_multithread main.cpp CommandBlock.h)
-#add_executable(test tests.cpp CommandBlock.h)
+add_executable(async main.cpp async.cpp async.h CommandBlock.h)
+add_executable(test tests.cpp async.cpp async.h CommandBlock.h)
 
-set(TARGETS bulk_multithread)
+set(TARGETS async test)
 
 foreach(target ${TARGETS})
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR

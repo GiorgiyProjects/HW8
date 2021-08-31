@@ -1,24 +1,28 @@
-#include "CommandBlock.h"
 #include <thread>
-int main(int argc, char** argv)
-{
-    //std::cout << std::thread::hardware_concurrency() << std::endl;
+#include "async.h"
 
-    std::ifstream in("../input/2.txt");
-    size_t N = (argc > 1) ? atoi(argv[1]) : 3;
-    CommandMemoryManager M(N);
-    InputCommandParser I;
-    CommandBlockConsoleOutputter CO;
-    CommandBlockFileOutputter FO1(1), FO2(2);
+namespace async {
 
-    std::thread CO_thread { &CommandBlockConsoleOutputter::Output, &CO };
-    std::thread FO1_thread { &CommandBlockFileOutputter::Output, &FO1 };
-    std::thread FO2_thread { &CommandBlockFileOutputter::Output, &FO2 };
+    using handle_t = void *;
 
-    I.InterpretInputs(in, M);
-    CO_thread.join();
-    FO1_thread.join();
-    FO2_thread.join();
+    handle_t connect(std::size_t bulk);
+    void receive(handle_t handle, const char *data, std::size_t size);
+    void disconnect(handle_t handle);
+
+}
+
+int main(int, char *[]) {
+    std::size_t bulk = 5;
+    auto h = async::connect(bulk);
+    auto h2 = async::connect(bulk);
+
+    async::receive(h, "1", 1);
+    async::receive(h2, "1\n", 2);
+    async::receive(h, "\n2\n3\n4\n5\n6\n{\na\n", 15);
+    async::receive(h, "b\nc\nd\n}\n89\n", 11);
+
+    async::disconnect(h);
+    async::disconnect(h2);
 
     return 0;
 }

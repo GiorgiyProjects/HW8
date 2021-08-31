@@ -1,5 +1,6 @@
 #define BOOST_TEST_MODULE tests
-#include "CommandBlock.h"
+#include "async.h"
+
 #include <boost/test/included/unit_test.hpp>
 
 BOOST_AUTO_TEST_SUITE( TestSuite )
@@ -22,18 +23,10 @@ BOOST_AUTO_TEST_SUITE( TestSuite )
         boost::test_tools::output_test_stream output;
         {
             cout_redirect guard(output.rdbuf());
-            int argc = 1;
-            int argv0 = 3;
-
-            std::ifstream in("input/1.txt");
-            size_t N = (argc > 1) ? argv0 : 3;
-            CommandMemoryManager M(N);
-            InputCommandParser I;
-            CommandBlockConsoleOutputter* O1 = new CommandBlockConsoleOutputter();
-            I.Attach(O1);
-            CommandBlockFileOutputter* O2 = new CommandBlockFileOutputter();
-            I.Attach(O2);
-            I.InterpretInputs(in, M);
+            size_t bulk = 3;
+            auto h = async::connect(bulk);
+            async::receive(h, "cmd1\ncmd2\ncmd3\ncmd4\ncmd5\n", 1);
+            async::disconnect(h);
         }
         BOOST_CHECK(output.is_equal ("bulk: cmd1,cmd2,cmd3\n"
                                         "bulk: cmd4,cmd5\n"
@@ -45,18 +38,10 @@ BOOST_AUTO_TEST_SUITE( TestSuite )
         boost::test_tools::output_test_stream output;
         {
             cout_redirect guard(output.rdbuf());
-            int argc = 1;
-            int argv0 = 3;
-
-            std::ifstream in("input/2.txt");
-            size_t N = (argc > 1) ? argv0 : 3;
-            CommandMemoryManager M(N);
-            InputCommandParser I;
-            CommandBlockConsoleOutputter* O1 = new CommandBlockConsoleOutputter();
-            I.Attach(O1);
-            CommandBlockFileOutputter* O2 = new CommandBlockFileOutputter();
-            I.Attach(O2);
-            I.InterpretInputs(in, M);
+            size_t bulk = 3;
+            auto h = async::connect(bulk);
+            async::receive(h, "cmd1\ncmd2\n{\ncmd3\ncmd4\n}\n{\ncmd5\ncmd6\n{\ncmd7\ncmd8\n}\ncmd9\n}\n{\ncmd10\ncmd11\n", 1);
+            async::disconnect(h);
         }
         BOOST_CHECK(output.is_equal ("bulk: cmd1,cmd2\n"
                                         "bulk: cmd3,cmd4\n"

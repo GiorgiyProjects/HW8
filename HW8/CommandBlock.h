@@ -1,3 +1,5 @@
+#pragma once
+
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -16,28 +18,24 @@ struct CommandBlock{
     size_t mTimestamp;
 };
 
-std::queue<CommandBlock> FileLoggerQueue;
-std::queue<CommandBlock> ConsoleLoggerQueue;
-bool InputFinished = false;
-std::mutex mut;
-
-class IOutputter {
+class IBlockOutputter {
 public:
-    virtual ~IOutputter(){};
-    virtual void Output() = 0;
+    virtual ~IBlockOutputter(){};
+    virtual void Output(std::queue<CommandBlock>& toOutput, bool& InputStringFinished, std::mutex& mut) = 0;
 };
 
-class CommandBlockConsoleOutputter : public IOutputter {
+class CommandBlockConsoleOutputter : public IBlockOutputter {
 private:
 public:
     CommandBlockConsoleOutputter() = default;
 
-    void Output()
+    void Output(std::queue<CommandBlock>& toOutput, bool& InputStringFinished, std::mutex& mut)
     {
-        while ((!InputFinished) || (!ConsoleLoggerQueue.empty())){
-            if (ConsoleLoggerQueue.empty()) continue;
-            vector<string> commands = ConsoleLoggerQueue.front().mCommands;
-            ConsoleLoggerQueue.pop();
+        while ((!InputStringFinished) || (!toOutput.empty())){
+            std::lock_guard<std::mutex> guard{mut};
+            if (toOutput.empty()) continue;
+            vector<string> commands = toOutput.front().mCommands;
+            toOutput.pop();
             cout << "bulk:";
             char c = ' ';
             for (const auto &el:commands) {
@@ -51,21 +49,21 @@ public:
     }
 };
 
-class CommandBlockFileOutputter : public IOutputter {
+class CommandBlockFileOutputter : public IBlockOutputter {
 private:
     int mId;
 public:
     CommandBlockFileOutputter(int id) : mId(id)
     {}
 
-    void Output()
+    void Output(std::queue<CommandBlock>& toOutput, bool& InputStringFinished, std::mutex& mut)
     {
-        while ((!InputFinished) || (!FileLoggerQueue.empty())) {
+        while ((!InputStringFinished) || (!toOutput.empty())) {
             std::lock_guard<std::mutex> guard{mut};
-            if (FileLoggerQueue.empty()) continue;
-            vector<string> commands = FileLoggerQueue.front().mCommands;
-            size_t timestamp = FileLoggerQueue.front().mTimestamp;
-            FileLoggerQueue.pop();
+            if (toOutput.empty()) continue;
+            vector<string> commands = toOutput.front().mCommands;
+            size_t timestamp = toOutput.front().mTimestamp;
+            toOutput.pop();
 
             ofstream f;
             string s = "bulk" + std::to_string(timestamp) + "_" + to_string(mId) + ".log";
@@ -85,7 +83,7 @@ public:
     }
 };
 
-class CommandMemoryManager
+class CommandInterpreter
 {
 private:
     CommandBlock mCurBlock;
@@ -95,7 +93,7 @@ private:
     bool mAmDynBlock = false;
 
 public:
-    CommandMemoryManager(size_t N) : mN(N)
+    CommandInterpreter(size_t N) : mN(N)
     {
         Refresh();
     }
@@ -163,30 +161,71 @@ class InputCommandParser
 {
 public:
     InputCommandParser() = default;
-    void InterpretInputs(std::ifstream& in, CommandMemoryManager& M)
+    template<typename T>
+    void InterpretInputs(T& in, CommandInterpreter& M, queue<CommandBlock>& FileLoggerQueue, queue<CommandBlock>& ConsoleLoggerQueue)
     {
         std::cin.rdbuf(in.rdbuf());
         string command;
 
         for(std::string command; std::getline(in, command);)
         {
+            if (command == "") continue;
             bool is_complete = M.Interpret(command);
             if (is_complete)
             {
-                PushBlockToOutputQueues(M.GetCurrentBlock());
+                PushBlockToOutputQueues(M.GetCurrentBlock(), FileLoggerQueue, ConsoleLoggerQueue);
                 M.Refresh(); // empty buffers
             }
-            std::this_thread::sleep_for(1s);
+            std::this_thread::sleep_for(0.1s);
         }
 
-        if (!M.IsDynBlock()) PushBlockToOutputQueues(M.GetCurrentBlock());
-        InputFinished = true;
         return;
     }
 
-    void PushBlockToOutputQueues(CommandBlock& B) {
+    void PushBlockToOutputQueues(CommandBlock& B, queue<CommandBlock>& FileLoggerQueue, queue<CommandBlock>& ConsoleLoggerQueue) {
         FileLoggerQueue.push(B);
         ConsoleLoggerQueue.push(B);
     }
 };
 
+class MultithreadCommandParser
+{
+private:
+    InputCommandParser mICP;
+    CommandBlockConsoleOutputter mCO;
+    CommandInterpreter mCI;
+    CommandBlockFileOutputter mFO1, mFO2;
+
+    queue<CommandBlock> mFileLoggerQueue;
+    queue<CommandBlock> mConsoleLoggerQueue;
+    bool mInputFinished;
+    std::mutex mut_console, mut_file;
+    std::thread CO_thread, FO1_thread, FO2_thread;
+
+
+public:
+    MultithreadCommandParser(size_t N) : mCI(N), mFO1(1), mFO2(2), mInputFinished(false),
+    CO_thread {&CommandBlockConsoleOutputter::Output, &mCO, std::ref(mConsoleLoggerQueue), std::ref(mInputFinished), std::ref(mut_console)},
+    FO1_thread { &CommandBlockFileOutputter::Output, &mFO1,  std::ref(mFileLoggerQueue), std::ref(mInputFinished), std::ref(mut_file)},
+    FO2_thread { &CommandBlockFileOutputter::Output, &mFO2,  std::ref(mFileLoggerQueue), std::ref(mInputFinished), std::ref(mut_file)}
+    {
+    }
+
+    ~MultithreadCommandParser()
+    {
+        if (!mCI.IsDynBlock()) mICP.PushBlockToOutputQueues(mCI.GetCurrentBlock(), mFileLoggerQueue, mConsoleLoggerQueue);
+        mInputFinished = true;
+
+        CO_thread.join();
+        FO1_thread.join();
+        FO2_thread.join();
+    }
+
+    void ReceiveInput(const std::string& str)
+    {
+        std::istringstream in(str);
+        mICP.InterpretInputs(in, mCI, mFileLoggerQueue, mConsoleLoggerQueue);
+        return;
+    }
+
+};
