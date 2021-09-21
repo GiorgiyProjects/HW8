@@ -10,6 +10,7 @@
 #include <thread>
 #include <queue>
 #include <mutex>
+#include <condition_variable>
 
 using namespace std;
 
@@ -18,10 +19,17 @@ struct CommandBlock{
     size_t mTimestamp;
 };
 
+struct MultithreadQueueController
+{
+    queue<CommandBlock> Queue;
+    std::condition_variable cv;
+    std::mutex mut;
+};
+
 class IBlockOutputter {
 public:
     virtual ~IBlockOutputter(){};
-    virtual void Output(std::queue<CommandBlock>& toOutput, bool& InputStringFinished, std::mutex& mut) = 0;
+    virtual void Output(MultithreadQueueController& QueueController, bool& InputStringFinished) = 0;
 };
 
 class CommandBlockConsoleOutputter : public IBlockOutputter {
@@ -29,13 +37,17 @@ private:
 public:
     CommandBlockConsoleOutputter() = default;
 
-    void Output(std::queue<CommandBlock>& toOutput, bool& InputStringFinished, std::mutex& mut)
+    void Output(MultithreadQueueController& QueueController, bool& InputStringFinished)
     {
-        while ((!InputStringFinished) || (!toOutput.empty())){
-            std::lock_guard<std::mutex> guard{mut};
-            if (toOutput.empty()) continue;
-            vector<string> commands = toOutput.front().mCommands;
-            toOutput.pop();
+        std::unique_lock<std::mutex> guard{QueueController.mut};
+        QueueController.cv.wait(guard, [&QueueController,&InputStringFinished]
+        {
+            return (!QueueController.Queue.empty() || InputStringFinished);
+        });
+        while (!QueueController.Queue.empty()){
+            if (QueueController.Queue.empty()) continue;
+            vector<string> commands = QueueController.Queue.front().mCommands;
+            QueueController.Queue.pop();
             cout << "bulk:";
             char c = ' ';
             for (const auto &el:commands) {
@@ -46,6 +58,12 @@ public:
             }
             cout << endl;
         }
+        guard.unlock();
+        if (InputStringFinished) {
+            return;
+        }
+
+        Output(QueueController, InputStringFinished);
     }
 };
 
@@ -56,14 +74,15 @@ public:
     CommandBlockFileOutputter(int id) : mId(id)
     {}
 
-    void Output(std::queue<CommandBlock>& toOutput, bool& InputStringFinished, std::mutex& mut)
+    void Output(MultithreadQueueController& QueueController, bool& InputStringFinished)
     {
-        while ((!InputStringFinished) || (!toOutput.empty())) {
-            std::lock_guard<std::mutex> guard{mut};
-            if (toOutput.empty()) continue;
-            vector<string> commands = toOutput.front().mCommands;
-            size_t timestamp = toOutput.front().mTimestamp;
-            toOutput.pop();
+        std::unique_lock<std::mutex> guard{QueueController.mut};
+        QueueController.cv.wait(guard, [&]{return (!QueueController.Queue.empty() || InputStringFinished);});
+        while (!QueueController.Queue.empty()) {
+            if (QueueController.Queue.empty()) continue;
+            vector<string> commands = QueueController.Queue.front().mCommands;
+            size_t timestamp = QueueController.Queue.front().mTimestamp;
+            QueueController.Queue.pop();
 
             ofstream f;
             string s = "bulk" + std::to_string(timestamp) + "_" + to_string(mId) + ".log";
@@ -80,6 +99,13 @@ public:
             f << endl;
             f.close();
         }
+
+        guard.unlock();
+        if (InputStringFinished) {
+            return;
+        }
+
+        Output(QueueController, InputStringFinished);
     }
 };
 
@@ -162,7 +188,7 @@ class InputCommandParser
 public:
     InputCommandParser() = default;
     template<typename T>
-    void InterpretInputs(T& in, CommandInterpreter& M, queue<CommandBlock>& FileLoggerQueue, queue<CommandBlock>& ConsoleLoggerQueue)
+    void InterpretInputs(T& in, CommandInterpreter& M, MultithreadQueueController& FileLogger, MultithreadQueueController& ConsoleLogger)
     {
         std::cin.rdbuf(in.rdbuf());
         string command;
@@ -173,20 +199,23 @@ public:
             bool is_complete = M.Interpret(command);
             if (is_complete)
             {
-                PushBlockToOutputQueues(M.GetCurrentBlock(), FileLoggerQueue, ConsoleLoggerQueue);
+                PushBlockToOutputQueues(M.GetCurrentBlock(), FileLogger, ConsoleLogger);
                 M.Refresh(); // empty buffers
             }
             std::this_thread::sleep_for(0.1s);
         }
-
         return;
     }
 
-    void PushBlockToOutputQueues(CommandBlock& B, queue<CommandBlock>& FileLoggerQueue, queue<CommandBlock>& ConsoleLoggerQueue) {
-        FileLoggerQueue.push(B);
-        ConsoleLoggerQueue.push(B);
+    void PushBlockToOutputQueues(CommandBlock& B, MultithreadQueueController& FileLogger, MultithreadQueueController& ConsoleLogger) {
+        FileLogger.Queue.push(B);
+        FileLogger.cv.notify_all();
+        ConsoleLogger.Queue.push(B);
+        ConsoleLogger.cv.notify_all();
     }
 };
+
+
 
 class MultithreadCommandParser
 {
@@ -196,25 +225,26 @@ private:
     CommandInterpreter mCI;
     CommandBlockFileOutputter mFO1, mFO2;
 
-    queue<CommandBlock> mFileLoggerQueue;
-    queue<CommandBlock> mConsoleLoggerQueue;
+    MultithreadQueueController mFileQueueController;
+    MultithreadQueueController mConsoleQueueController;
     bool mInputFinished;
-    std::mutex mut_console, mut_file;
     std::thread CO_thread, FO1_thread, FO2_thread;
 
 
 public:
     MultithreadCommandParser(size_t N) : mCI(N), mFO1(1), mFO2(2), mInputFinished(false),
-    CO_thread {&CommandBlockConsoleOutputter::Output, &mCO, std::ref(mConsoleLoggerQueue), std::ref(mInputFinished), std::ref(mut_console)},
-    FO1_thread { &CommandBlockFileOutputter::Output, &mFO1,  std::ref(mFileLoggerQueue), std::ref(mInputFinished), std::ref(mut_file)},
-    FO2_thread { &CommandBlockFileOutputter::Output, &mFO2,  std::ref(mFileLoggerQueue), std::ref(mInputFinished), std::ref(mut_file)}
+    CO_thread {&CommandBlockConsoleOutputter::Output, &mCO, std::ref(mConsoleQueueController), std::ref(mInputFinished)},
+    FO1_thread { &CommandBlockFileOutputter::Output, &mFO1,  std::ref(mFileQueueController), std::ref(mInputFinished)},
+    FO2_thread { &CommandBlockFileOutputter::Output, &mFO2,  std::ref(mFileQueueController), std::ref(mInputFinished)}
     {
     }
 
     ~MultithreadCommandParser()
     {
-        if (!mCI.IsDynBlock()) mICP.PushBlockToOutputQueues(mCI.GetCurrentBlock(), mFileLoggerQueue, mConsoleLoggerQueue);
+        if (!mCI.IsDynBlock()) mICP.PushBlockToOutputQueues(mCI.GetCurrentBlock(), mFileQueueController, mConsoleQueueController);
         mInputFinished = true;
+        mFileQueueController.cv.notify_all();
+        mConsoleQueueController.cv.notify_all();
 
         CO_thread.join();
         FO1_thread.join();
@@ -224,7 +254,7 @@ public:
     void ReceiveInput(const std::string& str)
     {
         std::istringstream in(str);
-        mICP.InterpretInputs(in, mCI, mFileLoggerQueue, mConsoleLoggerQueue);
+        mICP.InterpretInputs(in, mCI, mFileQueueController, mConsoleQueueController);
         return;
     }
 
